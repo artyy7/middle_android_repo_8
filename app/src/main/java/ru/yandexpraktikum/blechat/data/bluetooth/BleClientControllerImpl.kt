@@ -21,9 +21,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ru.yandexpraktikum.blechat.R
 import ru.yandexpraktikum.blechat.domain.bluetooth.BleClientController
 import ru.yandexpraktikum.blechat.domain.model.Message
 import ru.yandexpraktikum.blechat.domain.model.ScannedBluetoothDevice
+import ru.yandexpraktikum.blechat.presentation.notifications.NotificationsHelper
 import ru.yandexpraktikum.blechat.utils.checkForConnectPermission
 import ru.yandexpraktikum.blechat.utils.notifyCharUUID
 import ru.yandexpraktikum.blechat.utils.serviceUUID
@@ -50,7 +52,9 @@ class BleClientControllerImpl @Inject constructor(
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 when (newState) {
                     BluetoothProfile.STATE_CONNECTED -> {
-                        gatt.discoverServices()
+                        context.checkForConnectPermission {
+                            gatt.discoverServices()
+                        }
                         _scannedDevices.update { devices ->
                             devices.map {
                                 if (it.address == gatt.device.address) {
@@ -163,17 +167,17 @@ class BleClientControllerImpl @Inject constructor(
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device
-
-            val bluetoothDevice = ScannedBluetoothDevice(
-                name = device.name,
-                address = device.address
-            )
-            _scannedDevices.update { devices ->
-                if (devices.none { it.address == bluetoothDevice.address }) {
-                    devices + bluetoothDevice
-                } else devices
+            context.checkForConnectPermission {
+                val bluetoothDevice = ScannedBluetoothDevice(
+                    name = device.name,
+                    address = device.address
+                )
+                _scannedDevices.update { devices ->
+                    if (devices.none { it.address == bluetoothDevice.address }) {
+                        devices + bluetoothDevice
+                    } else devices
+                }
             }
-
         }
 
         override fun onScanFailed(errorCode: Int) {
@@ -249,25 +253,31 @@ class BleClientControllerImpl @Inject constructor(
     override suspend fun sendMessage(message: String, deviceAddress: String): Boolean {
         val gattService = currentGatt?.getService(serviceUUID)
         val characteristic = gattService?.getCharacteristic(writeCharUUID)
+        var writeResult = false
 
-        return if (characteristic != null) {
-            characteristic.setValue(message.toByteArray(Charset.defaultCharset()))
-            currentGatt?.writeCharacteristic(characteristic)
-            _scannedDevices.update { devices ->
-                devices.map {
-                    if (it.address == deviceAddress) {
-                        it.copy(
-                            messages = it.messages + Message(
-                                text = message,
-                                senderAddress = bluetoothAdapter?.address ?: "",
-                                isFromLocalUser = true
-                            )
+        if (characteristic == null) return false
+
+        characteristic.setValue(message.toByteArray(Charset.defaultCharset()))
+        context.checkForConnectPermission {
+            writeResult = currentGatt?.writeCharacteristic(characteristic) == true
+        }
+
+        if (!writeResult) return false
+
+        _scannedDevices.update { devices ->
+            devices.map {
+                if (it.address == deviceAddress) {
+                    it.copy(
+                        messages = it.messages + Message(
+                            text = message,
+                            senderAddress = bluetoothAdapter?.address ?: "",
+                            isFromLocalUser = true
                         )
-                    } else it
-                }
+                    )
+                } else it
             }
-            true
-        } else false
+        }
+        return true
     }
 
     override fun closeConnection() {
