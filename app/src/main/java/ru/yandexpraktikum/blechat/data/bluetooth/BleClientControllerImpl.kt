@@ -36,6 +36,7 @@ class BleClientControllerImpl @Inject constructor(
     private val bluetoothAdapter: BluetoothAdapter?,
     private val locationManager: LocationManager,
     private val viewModelScope: CoroutineScope,
+    private val notificationsHelper: NotificationsHelper,
 ) : BleClientController {
 
     private val bleScanner by lazy {
@@ -96,6 +97,10 @@ class BleClientControllerImpl @Inject constructor(
         ) {
             if (characteristic.uuid == notifyCharUUID) {
                 val message = String(characteristic.value, Charset.defaultCharset())
+                notificationsHelper.notifyOnMessageReceived(
+                    title = context.getString(R.string.new_message),
+                    message = message
+                )
                 viewModelScope.launch {
                     _scannedDevices.update { devices ->
                         devices.map {
